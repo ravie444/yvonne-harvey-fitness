@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yvonne Harvey Fitness</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,sans-serif}
+body{background:#f9f9f9;color:#111}
+.wrap{max-width:680px;margin:0 auto;padding:16px 16px 48px}
+input{width:100%;padding:8px 12px;font-size:14px;border:1px solid #ccc;border-radius:8px;background:#fff;color:#111;outline:none;display:block;margin-bottom:8px}
+button{cursor:pointer;padding:7px 16px;font-size:13px;border:1px solid #ccc;border-radius:8px;background:#fff;color:#111}
+button:hover{background:#f0f0f0}
+.card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:16px 20px;margin-bottom:12px}
+.muted{color:#666;font-size:13px}
+.pill{display:inline-block;font-size:12px;padding:3px 10px;border-radius:8px}
+.pg{background:#E1F5EE;color:#085041}
+.pa{background:#FAEEDA;color:#633806}
+.pr{background:#FCEBEB;color:#A32D2D}
+.pgr{background:#f5f5f5;color:#666}
+.bar-bg{background:#eee;border-radius:4px;height:5px;margin:8px 0 12px;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px}
+#toast{position:fixed;top:16px;right:16px;z-index:999;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:500;display:none;max-width:300px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="toast"></div>
+  <div id="header"></div>
+  <div id="main"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+
+firebase.initializeApp({
+  apiKey: "AIzaSyDqnXCxlhKcQly0cxg37p3vm0j-1jC114Y",
+  authDomain: "yvonne-harvey-fitness-cfa15.firebaseapp.com",
+  databaseURL: "https://yvonne-harvey-fitness-cfa15-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "yvonne-harvey-fitness-cfa15",
+  storageBucket: "yvonne-harvey-fitness-cfa15.firebasestorage.app",
+  messagingSenderId: "527418740578",
+  appId: "1:527418740578:web:ede48bfefb1cbdf585a63b"
+});
+var db = firebase.database();
+
+var ORDER = ["mon-pilates","thu-boogie","thu-pilates"];
+var RAMP = [
+  {bg:"#EEEDFE",fg:"#3C3489"},{bg:"#E1F5EE",fg:"#085041"},{bg:"#E6F1FB",fg:"#0C447C"},
+  {bg:"#FAECE7",fg:"#712B13"},{bg:"#FBEAF0",fg:"#72243E"},{bg:"#FAEEDA",fg:"#633806"}
+];
+
+var gData = null;
+var gView = "home";
+var gAuthed = false;
+var gTab = "classes";
+var gStudent = null;
+var gAuthMode = "login";
+var toastTimer = null;
+
+function colorFor(n){ return RAMP[n.charCodeAt(0) % RAMP.length]; }
+function inits(n){ return n.trim().split(" ").map(function(w){return w[0];}).join("").toUpperCase().slice(0,2); }
+function fmtDate(iso){
+  if(!iso) return "";
+  var d = new Date(iso);
+  return d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}) + " " +
+    d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+}
+function nextWeekly(day,h,m){
+  var now = new Date(), r = new Date(now);
+  r.setHours(h,m,0,0);
+  var diff = day - now.getDay();
+  if(diff < 0 || (diff === 0 && now >= r)) diff += 7;
+  r.setDate(now.getDate() + diff);
+  return r.toISOString();
+}
+function o2a(o){ return o ? Object.values(o) : []; }
+function a2o(a){ var o = {}; a.forEach(function(v,i){o[i]=v;}); return o; }
+function san(s){ return s.trim().toLowerCase().replace(/ /g,"_"); }
+
+function showToast(msg, type){
+  var t = document.getElementById("toast");
+  var cols = {success:{bg:"#E1F5EE",fg:"#085041"},info:{bg:"#E6F1FB",fg:"#0C447C"},warning:{bg:"#FAEEDA",fg:"#633806"}};
+  var c = cols[type||"success"];
+  t.style.background = c.bg; t.style.color = c.fg;
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.style.display="none"; }, 3500);
+}
+
+function parseData(raw){
+  if(!raw) return null;
+  var classes = {};
+  Object.keys(raw.classes||{}).forEach(function(id){
+    var c = raw.classes[id];
+    classes[id] = {id:id, name:c.name, location:c.location, capacity:c.capacity, date:c.date,
+      cancelled:c.cancelled, cancelNote:c.cancelNote||"",
+      bookings:o2a(c.bookings), waitlist:o2a(c.waitlist)};
+  });
+  return {classes:classes, students:raw.students||{}, password:raw.password||"yvonne2026"};
+}
+
+function defaultDB(){
+  var d = {};
+  d.password = "yvonne2026";
+  d.students = {};
+  d.classes = {};
+  d.classes["mon-pilates"]  = {name:"Pilates",       location:"Burngreen Hall",capacity:24,date:nextWeekly(1,18,0), cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
+  d.classes["thu-boogie"]   = {name:"Boogie Fitness", location:"Burngreen Hall",capacity:40,date:nextWeekly(4,18,30),cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
+  d.classes["thu-pilates"]  = {name:"Pilates",        location:"Burngreen Hall",capacity:24,date:nextWeekly(4,19,30),cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
+  return d;
+}
+
+// ---- render ----
+function render(){
+  renderHeader();
+  renderMain();
+}
+
+function renderHeader(){
+  var h = document.getElementById("header");
+  h.innerHTML = "";
+  h.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;border-bottom:1px solid #e5e5e5;padding-bottom:1rem;flex-wrap:wrap;gap:8px";
+
+  var left = document.createElement("div");
+  var t = document.createElement("div");
+  t.style.cssText = "font-size:20px;font-weight:500";
+  t.textContent = "Yvonne Harvey Fitness";
+  var s = document.createElement("div");
+  s.className = "muted";
+  s.textContent = "Burngreen Hall \u00b7 Class Booking";
+  left.appendChild(t); left.appendChild(s);
+
+  var right = document.createElement("div");
+  right.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+
+  if(gView === "home" && gStudent && gData && gData.students[gStudent]){
+    var stu = gData.students[gStudent];
+    var col = colorFor(stu.name);
+    var av = document.createElement("div");
+    av.style.cssText = "width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;background:"+col.bg+";color:"+col.fg;
+    av.textContent = inits(stu.name);
+    var nm = document.createElement("span");
+    nm.style.fontSize = "14px";
+    nm.textContent = stu.name;
+    var lb = document.createElement("button");
+    lb.textContent = "Log out";
+    lb.style.cssText = "font-size:12px;padding:4px 10px;color:#666";
+    lb.onclick = function(){ gStudent = null; render(); };
+    right.appendChild(av); right.appendChild(nm); right.appendChild(lb);
+  }
+
+  var mb = document.createElement("button");
+  mb.textContent = gView === "admin" ? "\u2190 Back" : "Instructor";
+  mb.onclick = function(){
+    gView = gView === "admin" ? "home" : "admin";
+    gAuthed = false;
+    render();
+  };
+  right.appendChild(mb);
+  h.appendChild(left); h.appendChild(right);
+}
+
+function renderMain(){
+  var m = document.getElementById("main");
+  m.innerHTML = "";
+  if(!gData){
+    m.innerHTML = '<div style="text-align:center;padding:48px;color:#666">Loading...</div>';
+    return;
+  }
+  if(gView === "home"){
+    if(!gStudent){
+      m.appendChild(renderAuthForm());
+    } else {
+      m.appendChild(renderClasses());
+    }
+  } else if(!gAuthed){
+    m.appendChild(renderInstructorLogin());
+  } else {
+    m.appendChild(renderAdmin());
+  }
+}
+
+// ---- Auth form ----
+function renderAuthForm(){
+  var wrap = document.createElement("div");
+  wrap.style.cssText = "max-width:360px;margin:0 auto";
+
+  var card = document.createElement("div");
+  card.className = "card";
+
+  var tabRow = document.createElement("div");
+  tabRow.style.cssText = "display:flex;gap:8px;margin-bottom:1.25rem;border-bottom:1px solid #f0f0f0;padding-bottom:1rem";
+
+  var loginTab = document.createElement("button");
+  loginTab.textContent = "Log in";
+  loginTab.style.cssText = "flex:1;font-weight:"+(gAuthMode==="login"?"500":"400")+";background:"+(gAuthMode==="login"?"#f5f5f5":"#fff")+";border-color:"+(gAuthMode==="login"?"#ccc":"transparent");
+  loginTab.onclick = function(){ gAuthMode = "login"; var m=document.getElementById("main"); m.innerHTML=""; m.appendChild(renderAuthForm()); };
+
+  var regTab = document.createElement("button");
+  regTab.textContent = "Register";
+  regTab.style.cssText = "flex:1;font-weight:"+(gAuthMode==="register"?"500":"400")+";background:"+(gAuthMode==="register"?"#f5f5f5":"#fff")+";border-color:"+(gAuthMode==="register"?"#ccc":"transparent");
+  regTab.onclick = function(){ gAuthMode = "register"; var m=document.getElementById("main"); m.innerHTML=""; m.appendChild(renderAuthForm()); };
+
+  tabRow.appendChild(loginTab); tabRow.appendChild(regTab);
+
+  var nameLabel = document.createElement("label");
+  nameLabel.textContent = "Full name"; nameLabel.style.cssText = "font-size:13px;color:#666;display:block;margin-bottom:4px";
+  var nameInp = document.createElement("input");
+  nameInp.type = "text"; nameInp.placeholder = "e.g. Sarah Smith";
+
+  var pinLabel = document.createElement("label");
+  pinLabel.textContent = "4-digit PIN"; pinLabel.style.cssText = "font-size:13px;color:#666;display:block;margin-bottom:4px";
+  var pinInp = document.createElement("input");
+  pinInp.type = "password"; pinInp.placeholder = "\u2022\u2022\u2022\u2022"; pinInp.maxLength = 4;
+  pinInp.style.cssText = "letter-spacing:6px;font-size:20px";
+
+  var pin2Label = document.createElement("label");
+  pin2Label.textContent = "Confirm PIN"; pin2Label.style.cssText = "font-size:13px;color:#666;display:block;margin-bottom:4px";
+  var pin2Inp = document.createElement("input");
+  pin2Inp.type = "password"; pin2Inp.placeholder = "\u2022\u2022\u2022\u2022"; pin2Inp.maxLength = 4;
+  pin2Inp.style.cssText = "letter-spacing:6px;font-size:20px";
+
+  var err = document.createElement("div");
+  err.style.cssText = "font-size:13px;color:#A32D2D;margin-bottom:8px;display:none";
+
+  var submitBtn = document.createElement("button");
+  submitBtn.textContent = gAuthMode === "login" ? "Log in" : "Create account";
+  submitBtn.style.cssText = "width:100%;margin-top:4px";
+
+  submitBtn.onclick = function(){
+    err.style.display = "none";
+    var name = nameInp.value.trim();
+    var pin = pinInp.value;
+    var key = san(name);
+    if(!name){ err.textContent = "Please enter your name."; err.style.display = "block"; return; }
+    if(gAuthMode === "register"){
+      if(pin.length !== 4){ err.textContent = "PIN must be exactly 4 digits."; err.style.display = "block"; return; }
+      if(pin !== pin2Inp.value){ err.textContent = "PINs don't match."; err.style.display = "block"; return; }
+      db.ref("/students/"+key).once("value").then(function(snap){
+        if(snap.exists()){ err.textContent = "Name already registered. Please log in."; err.style.display = "block"; return; }
+        db.ref("/students/"+key).set({name:name,pin:pin,attended:0,bundle:0}).then(function(){
+          gStudent = key; gAuthMode = "login"; render();
+        });
+      });
+    } else {
+      db.ref("/students/"+key).once("value").then(function(snap){
+        if(!snap.exists()){ err.textContent = "Name not found. Please register first."; err.style.display = "block"; return; }
+        var stu = snap.val();
+        if(stu.pin !== pin){ err.textContent = "Incorrect PIN."; err.style.display = "block"; return; }
+        gStudent = key; render();
+      });
+    }
+  };
+
+  nameInp.onkeydown = pinInp.onkeydown = pin2Inp.onkeydown = function(e){ if(e.key==="Enter") submitBtn.click(); };
+
+  card.appendChild(tabRow);
+  card.appendChild(nameLabel); card.appendChild(nameInp);
+  card.appendChild(pinLabel); card.appendChild(pinInp);
+  if(gAuthMode === "register"){ card.appendChild(pin2Label); card.appendChild(pin2Inp); }
+  card.appendChild(err);
+  card.appendChild(submitBtn);
+
+  if(gAuthMode === "login"){
+    var hint = document.createElement("div");
+    hint.className = "muted"; hint.style.cssText = "margin-top:12px;text-align:center";
+    hint.textContent = "Forgotten your PIN? Ask Yvonne to reset it.";
+    card.appendChild(hint);
+  }
+
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ---- Classes (student view) ----
+function renderClasses(){
+  var wrap = document.createElement("div");
+  var hdr = document.createElement("div");
+  hdr.style.marginBottom = "1.5rem";
+  var ht = document.createElement("div");
+  ht.style.cssText = "font-size:15px;font-weight:500;margin-bottom:4px";
+  ht.textContent = "Upcoming classes";
+  var hs = document.createElement("div");
+  hs.className = "muted"; hs.textContent = "Tap a class to book or cancel your spot.";
+  hdr.appendChild(ht); hdr.appendChild(hs);
+  wrap.appendChild(hdr);
+  ORDER.forEach(function(cid){
+    var cls = gData.classes[cid]; if(!cls) return;
+    wrap.appendChild(renderClassCard(cid, cls));
+  });
+  return wrap;
+}
+
+function renderClassCard(cid, cls){
+  var isBooked = cls.bookings.indexOf(gStudent) >= 0;
+  var isWaiting = cls.waitlist.indexOf(gStudent) >= 0;
+  var waitPos = cls.waitlist.indexOf(gStudent) + 1;
+  var spotsLeft = cls.capacity - cls.bookings.length;
+  var full = spotsLeft <= 0;
+  var pct = Math.min(100, Math.round(cls.bookings.length / cls.capacity * 100));
+
+  var card = document.createElement("div");
+  card.className = "card";
+  card.style.borderColor = cls.cancelled ? "#F09595" : isBooked ? "#5DCAA5" : "#e5e5e5";
+  if(isBooked) card.style.borderWidth = "2px";
+
+  var hrow = document.createElement("div");
+  hrow.style.cssText = "display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px";
+
+  var info = document.createElement("div");
+  var nm = document.createElement("div");
+  nm.style.cssText = "font-weight:500;font-size:16px"; nm.textContent = cls.name;
+  var dt = document.createElement("div");
+  dt.className = "muted"; dt.textContent = fmtDate(cls.date) + " \u00b7 " + cls.location;
+  info.appendChild(nm); info.appendChild(dt);
+
+  var badge = document.createElement("span");
+  badge.className = "pill";
+  if(cls.cancelled){ badge.className += " pr"; badge.textContent = "Cancelled"; }
+  else if(isBooked){ badge.className += " pg"; badge.textContent = "\u2713 Booked"; }
+  else if(isWaiting){ badge.className += " pa"; badge.textContent = "Waitlist #"+waitPos; }
+  else if(full){ badge.className += " pa"; badge.textContent = "Full \u00b7 "+cls.waitlist.length+" waiting"; }
+  else { badge.className += " pg"; badge.textContent = spotsLeft+" spot"+(spotsLeft!==1?"s":"")+" left"; }
+
+  hrow.appendChild(info); hrow.appendChild(badge);
+  card.appendChild(hrow);
+
+  if(!cls.cancelled){
+    var barbg = document.createElement("div"); barbg.className = "bar-bg";
+    var barfill = document.createElement("div"); barfill.className = "bar-fill";
+    barfill.style.width = pct+"%"; barfill.style.background = full ? "#BA7517" : "#1D9E75";
+    barbg.appendChild(barfill); card.appendChild(barbg);
+
+    var actionBtn = document.createElement("button");
+    if(isBooked || isWaiting){
+      actionBtn.textContent = "Cancel my spot";
+      actionBtn.style.color = "#A32D2D";
+      actionBtn.onclick = function(){ doCancel(cid, gStudent); };
+    } else {
+      actionBtn.textContent = full ? "Join waitlist" : "Book a spot";
+      actionBtn.onclick = function(){ doBook(cid); };
+    }
+    card.appendChild(actionBtn);
+
+    var binfo = document.createElement("div");
+    binfo.className = "muted"; binfo.style.marginTop = "10px";
+    binfo.textContent = cls.bookings.length+"/"+cls.capacity+" booked"+(cls.waitlist.length>0?" \u00b7 "+cls.waitlist.length+" on waitlist":"");
+    card.appendChild(binfo);
+  }
+  if(cls.cancelled && cls.cancelNote){
+    var cn = document.createElement("div");
+    cn.style.cssText = "font-size:13px;color:#A32D2D;margin-top:6px"; cn.textContent = cls.cancelNote;
+    card.appendChild(cn);
+  }
+  return card;
+}
+
+// ---- Booking actions ----
+function doBook(cid){
+  if(!gStudent) return;
+  db.ref("/classes/"+cid).once("value").then(function(snap){
+    var c = snap.val();
+    var bk = o2a(c.bookings), wl = o2a(c.waitlist);
+    if(bk.indexOf(gStudent)>=0||wl.indexOf(gStudent)>=0){ showToast("Already booked or on waitlist","warning"); return; }
+    var stuName = gData.students[gStudent] ? gData.students[gStudent].name : gStudent;
+    if(bk.length < c.capacity){
+      bk.push(gStudent);
+      db.ref("/classes/"+cid+"/bookings").set(a2o(bk));
+      showToast(stuName+" booked for "+c.name+"!");
+    } else {
+      wl.push(gStudent);
+      db.ref("/classes/"+cid+"/waitlist").set(a2o(wl));
+      showToast(stuName+" added to waitlist (#"+wl.length+")","info");
+    }
+  });
+}
+
+function doCancel(cid, key){
+  db.ref("/classes/"+cid).once("value").then(function(snap){
+    var c = snap.val();
+    var bk = o2a(c.bookings), wl = o2a(c.waitlist);
+    var inBk = bk.indexOf(key) >= 0;
+    bk = bk.filter(function(b){return b!==key;});
+    wl = wl.filter(function(w){return w!==key;});
+    var promoted = null;
+    if(inBk && wl.length > 0){ promoted = wl.shift(); bk.push(promoted); }
+    db.ref("/classes/"+cid).update({bookings:a2o(bk), waitlist:a2o(wl)});
+    var cname = gData.students[key] ? gData.students[key].name : key;
+    if(promoted){
+      var pname = gData.students[promoted] ? gData.students[promoted].name : promoted;
+      showToast(cname+" cancelled. "+pname+" promoted!","info");
+    } else {
+      showToast(cname+"'s booking cancelled.","warning");
+    }
+  });
+}
+
+// ---- Instructor login ----
+function renderInstructorLogin(){
+  var wrap = document.createElement("div");
+  wrap.style.cssText = "max-width:340px;margin:2rem auto";
+  var card = document.createElement("div"); card.className = "card";
+  var title = document.createElement("div");
+  title.style.cssText = "font-weight:500;margin-bottom:1rem"; title.textContent = "Instructor login";
+  var pwi = document.createElement("input"); pwi.type = "password"; pwi.placeholder = "Password";
+  var err = document.createElement("div"); err.style.cssText = "font-size:13px;color:#A32D2D;display:none;margin-bottom:8px";
+  var lb = document.createElement("button"); lb.textContent = "Log in"; lb.style.width = "100%";
+  lb.onclick = function(){
+    if(pwi.value === gData.password){ gAuthed = true; render(); }
+    else { err.textContent = "Incorrect password"; err.style.display = "block"; }
+  };
+  pwi.onkeydown = function(e){ if(e.key==="Enter") lb.click(); };
+  card.appendChild(title); card.appendChild(pwi); card.appendChild(err); card.appendChild(lb);
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ---- Admin ----
+function renderAdmin(){
+  var wrap = document.createElement("div");
+  var title = document.createElement("div");
+  title.style.cssText = "font-weight:500;font-size:16px;margin-bottom:1rem"; title.textContent = "Instructor panel";
+  var tabRow = document.createElement("div");
+  tabRow.style.cssText = "display:flex;gap:8px;margin-bottom:1.5rem;border-bottom:1px solid #e5e5e5;padding-bottom:0.75rem";
+
+  var content = document.createElement("div");
+
+  function setTab(t){
+    gTab = t;
+    tabRow.querySelectorAll("button").forEach(function(b){
+      b.style.background = b.dataset.tab===t ? "#f5f5f5" : "#fff";
+      b.style.fontWeight = b.dataset.tab===t ? "500" : "400";
+      b.style.borderColor = b.dataset.tab===t ? "#ccc" : "transparent";
+    });
+    content.innerHTML = "";
+    if(t==="classes") content.appendChild(renderAdminClasses());
+    else if(t==="students") content.appendChild(renderAdminStudents());
+    else content.appendChild(renderAdminSettings());
+  }
+
+  ["classes","students","settings"].forEach(function(t){
+    var b = document.createElement("button");
+    b.textContent = t.charAt(0).toUpperCase()+t.slice(1);
+    b.dataset.tab = t;
+    b.style.borderColor = "transparent";
+    b.onclick = function(){ setTab(t); };
+    tabRow.appendChild(b);
+  });
+
+  wrap.appendChild(title); wrap.appendChild(tabRow); wrap.appendChild(content);
+  setTab(gTab);
+  return wrap;
+}
+
+function renderAdminClasses(){
+  var wrap = document.createElement("div");
+  ORDER.forEach(function(cid){
+    var cls = gData.classes[cid]; if(!cls) return;
+    wrap.appendChild(renderAdminClassCard(cid, cls));
+  });
+  return wrap;
+}
+
+function renderAdminClassCard(cid, cls){
+  var card = document.createElement("div"); card.className = "card";
+  var editing = false;
+  var inner = document.createElement("div");
+
+  function buildView(){
+    inner.innerHTML = "";
+    if(editing){
+      var draft = {name:cls.name,location:cls.location,capacity:cls.capacity,date:cls.date,cancelled:cls.cancelled,cancelNote:cls.cancelNote||""};
+      var grid = document.createElement("div"); grid.style.cssText = "display:grid;gap:8px";
+
+      function addField(lbl,key,type){
+        var lb = document.createElement("label"); lb.style.cssText = "font-size:13px;color:#666"; lb.textContent = lbl;
+        var i = document.createElement("input"); i.type = type||"text";
+        if(type==="datetime-local"){
+          var d = new Date(draft[key]);
+          i.value = new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+        } else { i.value = String(draft[key]||""); }
+        i.oninput = function(e){
+          if(type==="number") draft[key]=parseInt(e.target.value)||1;
+          else if(type==="datetime-local") draft[key]=new Date(e.target.value).toISOString();
+          else draft[key]=e.target.value;
+        };
+        grid.appendChild(lb); grid.appendChild(i);
+      }
+      addField("Class name","name","text");
+      addField("Date and time","date","datetime-local");
+      addField("Location","location","text");
+      addField("Max capacity","capacity","number");
+
+      var chkRow = document.createElement("div"); chkRow.style.cssText = "display:flex;align-items:center;gap:8px";
+      var chk = document.createElement("input"); chk.type = "checkbox"; chk.checked = draft.cancelled;
+      var chkLbl = document.createElement("label"); chkLbl.style.cssText = "font-size:13px;margin:0"; chkLbl.textContent = "Mark as cancelled";
+      var noteWrap = document.createElement("div"); noteWrap.style.display = draft.cancelled?"block":"none";
+      var noteInp = document.createElement("input"); noteInp.type="text"; noteInp.placeholder="Cancellation note"; noteInp.value=draft.cancelNote;
+      noteInp.oninput=function(e){draft.cancelNote=e.target.value;};
+      noteWrap.appendChild(noteInp);
+      chk.onchange=function(e){draft.cancelled=e.target.checked;noteWrap.style.display=e.target.checked?"block":"none";};
+      chkRow.appendChild(chk); chkRow.appendChild(chkLbl);
+      grid.appendChild(chkRow); grid.appendChild(noteWrap);
+
+      var btnRow = document.createElement("div"); btnRow.style.cssText="display:flex;gap:8px;margin-top:12px";
+      var saveBtn = document.createElement("button"); saveBtn.textContent = "Save changes";
+      saveBtn.onclick = function(){
+        db.ref("/classes/"+cid).update(draft).then(function(){ showToast("Class updated"); editing=false; buildView(); });
+      };
+      var cancelBtn = document.createElement("button"); cancelBtn.textContent = "Cancel";
+      cancelBtn.onclick = function(){ editing=false; buildView(); };
+      btnRow.appendChild(saveBtn); btnRow.appendChild(cancelBtn);
+      inner.appendChild(grid); inner.appendChild(btnRow);
+    } else {
+      var hrow = document.createElement("div"); hrow.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px";
+      var left = document.createElement("div");
+      var nm = document.createElement("div"); nm.style.fontWeight="500"; nm.textContent=cls.name+(cls.cancelled?" [Cancelled]":"");
+      var dt = document.createElement("div"); dt.className="muted"; dt.textContent=fmtDate(cls.date)+" \u00b7 "+cls.location+" \u00b7 Cap: "+cls.capacity;
+      left.appendChild(nm); left.appendChild(dt);
+      var editBtn = document.createElement("button"); editBtn.textContent="Edit"; editBtn.style.cssText="font-size:12px;padding:4px 10px";
+      editBtn.onclick=function(){editing=true;buildView();};
+      hrow.appendChild(left); hrow.appendChild(editBtn);
+      inner.appendChild(hrow);
+
+      var binfo = document.createElement("div"); binfo.className="muted";
+      binfo.textContent="Booked: "+cls.bookings.length+"/"+cls.capacity+(cls.waitlist.length>0?" \u00b7 Waitlist: "+cls.waitlist.length:"");
+      inner.appendChild(binfo);
+
+      if(cls.bookings.length>0){
+        var bTitle=document.createElement("div"); bTitle.style.cssText="font-size:12px;font-weight:500;color:#666;margin:12px 0 6px"; bTitle.textContent="Booked";
+        inner.appendChild(bTitle);
+        cls.bookings.forEach(function(key){
+          var stu=gData.students[key]; var nm2=stu?stu.name:key;
+          inner.appendChild(makeStuRow(nm2,key,cid,false,stu));
+        });
+      }
+      if(cls.waitlist.length>0){
+        var wTitle=document.createElement("div"); wTitle.style.cssText="font-size:12px;font-weight:500;color:#666;margin:12px 0 6px"; wTitle.textContent="Waitlist";
+        inner.appendChild(wTitle);
+        cls.waitlist.forEach(function(key,i){
+          var stu=gData.students[key]; var nm2=stu?stu.name:key;
+          inner.appendChild(makeStuRow(nm2,key,cid,true,stu,i));
+        });
+      }
+    }
+  }
+
+  function makeStuRow(nm2,key,cid,isWait,stu,idx){
+    var row=document.createElement("div"); row.style.cssText="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px";
+    var lft=document.createElement("div"); lft.style.cssText="display:flex;align-items:center;gap:8px";
+    if(isWait){ var ix=document.createElement("span"); ix.className="muted"; ix.style.minWidth="18px"; ix.textContent="#"+(idx+1); lft.appendChild(ix); }
+    var col=colorFor(nm2);
+    var av=document.createElement("div"); av.style.cssText="width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;flex-shrink:0;background:"+col.bg+";color:"+col.fg;
+    av.textContent=inits(nm2);
+    var sp=document.createElement("span"); sp.style.fontSize="14px"; sp.textContent=nm2;
+    lft.appendChild(av); lft.appendChild(sp);
+    if(stu&&stu.bundle>0){ var bp=document.createElement("span"); bp.className="pill pg"; bp.style.fontSize="11px"; bp.textContent=stu.bundle+" left"; lft.appendChild(bp); }
+    var rht=document.createElement("div"); rht.style.cssText="display:flex;gap:6px";
+    if(!isWait){
+      var attBtn=document.createElement("button"); attBtn.textContent="Mark attended"; attBtn.style.cssText="font-size:12px;padding:4px 10px";
+      attBtn.onclick=function(){
+        db.ref("/students/"+key).once("value").then(function(s){ var sv=s.val()||{attended:0,bundle:0}; db.ref("/students/"+key).update({attended:(sv.attended||0)+1,bundle:Math.max(0,(sv.bundle||0)-1)}); showToast("Attendance marked for "+nm2); });
+      };
+      rht.appendChild(attBtn);
+    }
+    var remBtn=document.createElement("button"); remBtn.textContent="Remove"; remBtn.style.cssText="font-size:12px;padding:4px 10px;color:#A32D2D";
+    remBtn.onclick=function(){doCancel(cid,key);};
+    rht.appendChild(remBtn);
+    row.appendChild(lft); row.appendChild(rht);
+    return row;
+  }
+
+  buildView();
+  card.appendChild(inner);
+  return card;
+}
+
+function renderAdminStudents(){
+  var wrap = document.createElement("div");
+  var entries = Object.entries(gData.students||{});
+  if(!entries.length){ var none=document.createElement("div"); none.className="muted"; none.textContent="No students registered yet."; wrap.appendChild(none); return wrap; }
+  entries.forEach(function(entry){
+    var key=entry[0], stu=entry[1];
+    var col=colorFor(stu.name);
+    var card=document.createElement("div"); card.className="card";
+
+    var top=document.createElement("div"); top.style.cssText="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px";
+    var lft=document.createElement("div"); lft.style.cssText="display:flex;align-items:center;gap:8px";
+    var av=document.createElement("div"); av.style.cssText="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;flex-shrink:0;background:"+col.bg+";color:"+col.fg;
+    av.textContent=inits(stu.name);
+    var inf=document.createElement("div");
+    var nm=document.createElement("div"); nm.style.cssText="font-weight:500;font-size:15px"; nm.textContent=stu.name;
+    var at=document.createElement("div"); at.className="muted"; at.textContent=(stu.attended||0)+" class"+(stu.attended!==1?"es":"")+" attended";
+    inf.appendChild(nm); inf.appendChild(at);
+    lft.appendChild(av); lft.appendChild(inf);
+
+    var rht=document.createElement("div"); rht.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+    var bpill=document.createElement("span"); bpill.className="pill "+(stu.bundle>0?"pg":"pgr"); bpill.textContent=stu.bundle>0?"Bundle: "+stu.bundle+" left":"Pay on the day";
+    var resetBtn=document.createElement("button"); resetBtn.textContent="Reset PIN \u2192 1234"; resetBtn.style.cssText="font-size:12px;padding:4px 10px;color:#633806";
+    resetBtn.onclick=function(){ db.ref("/students/"+key).update({pin:"1234"}); showToast(stu.name+"'s PIN reset to 1234","info"); };
+    rht.appendChild(bpill); rht.appendChild(resetBtn);
+    top.appendChild(lft); top.appendChild(rht);
+    card.appendChild(top);
+
+    // Bundle editor
+    var bedge=document.createElement("div"); bedge.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid #f0f0f0;padding-top:10px";
+    var lbl=document.createElement("span"); lbl.className="muted"; lbl.textContent="Adjust bundle:";
+    var amtInp=document.createElement("input"); amtInp.type="number"; amtInp.value="10"; amtInp.style.cssText="width:70px;padding:4px 8px;font-size:13px;margin-bottom:0";
+    var addBtn=document.createElement("button"); addBtn.textContent="+ Add"; addBtn.style.cssText="font-size:12px;padding:4px 10px;color:#085041";
+    addBtn.onclick=function(){ var v=parseInt(amtInp.value)||0; if(v<=0)return; db.ref("/students/"+key).once("value").then(function(s){ var sv=s.val()||{bundle:0}; db.ref("/students/"+key).update({bundle:Math.max(0,(sv.bundle||0)+v)}); showToast("+"+v+" classes for "+stu.name); }); };
+    var dedBtn=document.createElement("button"); dedBtn.textContent="\u2212 Deduct"; dedBtn.style.cssText="font-size:12px;padding:4px 10px;color:#A32D2D";
+    dedBtn.onclick=function(){ var v=parseInt(amtInp.value)||0; if(v<=0)return; db.ref("/students/"+key).once("value").then(function(s){ var sv=s.val()||{bundle:0}; db.ref("/students/"+key).update({bundle:Math.max(0,(sv.bundle||0)-v)}); showToast("-"+v+" classes for "+stu.name,"warning"); }); };
+    var curLbl=document.createElement("span"); curLbl.className="muted"; curLbl.innerHTML="Current: <strong>"+(stu.bundle||0)+"</strong>";
+    bedge.appendChild(lbl); bedge.appendChild(amtInp); bedge.appendChild(addBtn); bedge.appendChild(dedBtn); bedge.appendChild(curLbl);
+    card.appendChild(bedge);
+
+    var booked=ORDER.filter(function(cid){return gData.classes[cid]&&gData.classes[cid].bookings.indexOf(key)>=0;}).map(function(cid){return gData.classes[cid].name;});
+    var waiting=ORDER.filter(function(cid){return gData.classes[cid]&&gData.classes[cid].waitlist.indexOf(key)>=0;}).map(function(cid){return gData.classes[cid].name;});
+    if(booked.length>0||waiting.length>0){
+      var brow=document.createElement("div"); brow.style.cssText="display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid #f0f0f0;padding-top:10px;margin-top:10px";
+      booked.forEach(function(n){var p=document.createElement("span");p.className="pill pg";p.textContent="\u2713 "+n;brow.appendChild(p);});
+      waiting.forEach(function(n){var p=document.createElement("span");p.className="pill pa";p.textContent="\u23f3 "+n;brow.appendChild(p);});
+      card.appendChild(brow);
+    }
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
+function renderAdminSettings(){
+  var wrap=document.createElement("div"); wrap.style.maxWidth="400px";
+  var card=document.createElement("div"); card.className="card";
+  var title=document.createElement("div"); title.style.cssText="font-weight:500;margin-bottom:1rem"; title.textContent="Change instructor password";
+  var i1=document.createElement("input"); i1.type="password"; i1.placeholder="New password";
+  var i2=document.createElement("input"); i2.type="password"; i2.placeholder="Confirm new password";
+  var msg=document.createElement("div"); msg.style.cssText="font-size:13px;margin-bottom:8px;display:none";
+  var saveBtn=document.createElement("button"); saveBtn.textContent="Update password";
+  saveBtn.onclick=function(){
+    if(!i1.value||i1.value!==i2.value){msg.textContent="Passwords don't match";msg.style.color="#A32D2D";msg.style.display="block";return;}
+    if(i1.value.length<6){msg.textContent="At least 6 characters";msg.style.color="#A32D2D";msg.style.display="block";return;}
+    db.ref("/password").set(i1.value).then(function(){ i1.value=""; i2.value=""; msg.textContent="Password updated!"; msg.style.color="#085041"; msg.style.display="block"; showToast("Password updated"); setTimeout(function(){msg.style.display="none";},3000); });
+  };
+  card.appendChild(title); card.appendChild(i1); card.appendChild(i2); card.appendChild(msg); card.appendChild(saveBtn);
+  wrap.appendChild(card);
+  return wrap;
+}
+
+// ---- Boot ----
+db.ref("/").once("value").then(function(snap){
+  if(!snap.exists()){
+    return db.ref("/").set(defaultDB());
+  }
+}).then(function(){
+  db.ref("/").on("value", function(snap){
+    gData = parseData(snap.val());
+    render();
+  });
+}).catch(function(e){
+  document.getElementById("main").innerHTML = '<div style="text-align:center;padding:48px;color:#A32D2D">Failed to connect.<br><small>'+e.message+'</small></div>';
+});
+
+</script>
+</body>
+</html>
