@@ -153,13 +153,71 @@ function renderHeader(){
   h.appendChild(left); h.appendChild(right);
 }
 
+function checkPromotionNotifications(){
+  if(!gStudent || !gData) return null;
+  var notifications = [];
+  ORDER.forEach(function(cid){
+    var cls = gData.classes[cid]; if(!cls) return;
+    var notifKey = "notif_"+gStudent+"_"+cid;
+    var lastNotif = sessionStorage.getItem(notifKey);
+    if(cls.bookings.indexOf(gStudent) >= 0){
+      var promotedKey = "promoted_"+gStudent+"_"+cid;
+      var wasPromoted = sessionStorage.getItem(promotedKey);
+      if(!wasPromoted){
+        // Check if they were previously on waitlist by storing waitlist state
+        var prevWaitKey = "prev_wait_"+gStudent+"_"+cid;
+        var wasWaiting = sessionStorage.getItem(prevWaitKey);
+        if(wasWaiting === "true"){
+          notifications.push(cls.name + " on " + fmtDate(cls.date));
+          sessionStorage.setItem(promotedKey, "true");
+        }
+      }
+      sessionStorage.setItem(prevWaitKey, "false");
+    } else if(cls.waitlist.indexOf(gStudent) >= 0){
+      sessionStorage.setItem("prev_wait_"+gStudent+"_"+cid, "true");
+      sessionStorage.removeItem("promoted_"+gStudent+"_"+cid);
+    } else {
+      sessionStorage.setItem("prev_wait_"+gStudent+"_"+cid, "false");
+      sessionStorage.removeItem("promoted_"+gStudent+"_"+cid);
+    }
+  });
+  return notifications;
+}
+
+function renderNotificationBanner(notifications){
+  if(!notifications || notifications.length === 0) return null;
+  var banner = document.createElement("div");
+  banner.style.cssText = "background:#E1F5EE;border:1px solid #5DCAA5;border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px";
+  var left = document.createElement("div");
+  var title = document.createElement("div");
+  title.style.cssText = "font-weight:500;color:#085041;margin-bottom:4px;font-size:15px";
+  title.textContent = "\uD83C\uDF89 Great news!";
+  var msg = document.createElement("div");
+  msg.style.cssText = "font-size:13px;color:#085041";
+  msg.textContent = "You've been moved off the waitlist and are now booked in for: " + notifications.join(", ") + "!";
+  left.appendChild(title); left.appendChild(msg);
+  var closeBtn = document.createElement("button");
+  closeBtn.textContent = "\u2715";
+  closeBtn.style.cssText = "background:transparent;border:none;color:#085041;font-size:16px;cursor:pointer;padding:0;flex-shrink:0";
+  closeBtn.onclick = function(){ banner.style.display = "none"; };
+  banner.appendChild(left); banner.appendChild(closeBtn);
+  return banner;
+}
+
 function renderMain(){
   var m = document.getElementById("main");
   m.innerHTML = "";
   if(!gData){ m.innerHTML = '<div style="text-align:center;padding:48px;color:#666">Loading...</div>'; return; }
   if(gView === "home"){
     if(!gStudent){ m.appendChild(renderAuthForm()); }
-    else { m.appendChild(renderClasses()); }
+    else {
+      var notifications = checkPromotionNotifications();
+      if(notifications && notifications.length > 0){
+        var banner = renderNotificationBanner(notifications);
+        if(banner) m.appendChild(banner);
+      }
+      m.appendChild(renderClasses());
+    }
   } else if(!gAuthed){
     m.appendChild(renderInstructorLogin());
   } else {
