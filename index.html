@@ -98,7 +98,15 @@ function parseData(raw){
       cancelled:c.cancelled, cancelNote:c.cancelNote||"",
       bookings:o2a(c.bookings), waitlist:o2a(c.waitlist)};
   });
-  return {classes:classes, students:raw.students||{}, password:raw.password||"yvonne2026"};
+  var students = {};
+  Object.keys(raw.students||{}).forEach(function(key){
+    var s = raw.students[key];
+    students[key] = {
+      name: s.name, pin: s.pin, attended: s.attended||0, bundle: s.bundle||0,
+      notifications: s.notifications ? o2a(s.notifications) : []
+    };
+  });
+  return {classes:classes, students:students, password:raw.password||"yvonne2026"};
 }
 
 function defaultDB(){
