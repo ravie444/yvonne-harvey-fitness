@@ -154,34 +154,11 @@ function renderHeader(){
 }
 
 function checkPromotionNotifications(){
-  if(!gStudent || !gData) return null;
-  var notifications = [];
-  ORDER.forEach(function(cid){
-    var cls = gData.classes[cid]; if(!cls) return;
-    var notifKey = "notif_"+gStudent+"_"+cid;
-    var lastNotif = sessionStorage.getItem(notifKey);
-    if(cls.bookings.indexOf(gStudent) >= 0){
-      var promotedKey = "promoted_"+gStudent+"_"+cid;
-      var wasPromoted = sessionStorage.getItem(promotedKey);
-      if(!wasPromoted){
-        // Check if they were previously on waitlist by storing waitlist state
-        var prevWaitKey = "prev_wait_"+gStudent+"_"+cid;
-        var wasWaiting = sessionStorage.getItem(prevWaitKey);
-        if(wasWaiting === "true"){
-          notifications.push(cls.name + " on " + fmtDate(cls.date));
-          sessionStorage.setItem(promotedKey, "true");
-        }
-      }
-      sessionStorage.setItem(prevWaitKey, "false");
-    } else if(cls.waitlist.indexOf(gStudent) >= 0){
-      sessionStorage.setItem("prev_wait_"+gStudent+"_"+cid, "true");
-      sessionStorage.removeItem("promoted_"+gStudent+"_"+cid);
-    } else {
-      sessionStorage.setItem("prev_wait_"+gStudent+"_"+cid, "false");
-      sessionStorage.removeItem("promoted_"+gStudent+"_"+cid);
-    }
-  });
-  return notifications;
+  if(!gStudent || !gData) return [];
+  var stu = gData.students[gStudent];
+  if(!stu || !stu.notifications) return [];
+  var unseen = o2a(stu.notifications).filter(function(n){ return !n.seen; });
+  return unseen;
 }
 
 function renderNotificationBanner(notifications){
@@ -194,12 +171,21 @@ function renderNotificationBanner(notifications){
   title.textContent = "\uD83C\uDF89 Great news!";
   var msg = document.createElement("div");
   msg.style.cssText = "font-size:13px;color:#085041";
-  msg.textContent = "You've been moved off the waitlist and are now booked in for: " + notifications.join(", ") + "!";
+  var classNames = notifications.map(function(n){ return n.className+" on "+fmtDate(n.date); }).join(", ");
+  msg.textContent = "You've been moved off the waitlist and are now booked in for: "+classNames+"!";
   left.appendChild(title); left.appendChild(msg);
   var closeBtn = document.createElement("button");
   closeBtn.textContent = "\u2715";
   closeBtn.style.cssText = "background:transparent;border:none;color:#085041;font-size:16px;cursor:pointer;padding:0;flex-shrink:0";
-  closeBtn.onclick = function(){ banner.style.display = "none"; };
+  closeBtn.onclick = function(){
+    banner.style.display = "none";
+    // Mark all notifications as seen in Firebase
+    var stu = gData.students[gStudent];
+    if(stu && stu.notifications){
+      var updated = o2a(stu.notifications).map(function(n){ return Object.assign({},n,{seen:true}); });
+      db.ref("/students/"+gStudent+"/notifications").set(a2o(updated));
+    }
+  };
   banner.appendChild(left); banner.appendChild(closeBtn);
   return banner;
 }
@@ -375,6 +361,7 @@ function doBook(cid){
   });
 }
 
+// When cancelling, store promotion notification in Firebase for the promoted student
 function doCancel(cid, key){
   db.ref("/classes/"+cid).once("value").then(function(snap){
     var c = snap.val();
@@ -385,8 +372,19 @@ function doCancel(cid, key){
     if(inBk && wl.length > 0){ promoted = wl.shift(); bk.push(promoted); }
     db.ref("/classes/"+cid).update({bookings:a2o(bk), waitlist:a2o(wl)});
     var cname = gData.students[key] ? gData.students[key].name : key;
-    if(promoted){ var pname = gData.students[promoted] ? gData.students[promoted].name : promoted; showToast(cname+" cancelled. "+pname+" promoted!","info"); }
-    else { showToast(cname+"'s booking cancelled.","warning"); }
+    if(promoted){
+      var pname = gData.students[promoted] ? gData.students[promoted].name : promoted;
+      // Store notification for promoted student in Firebase
+      var notifRef = db.ref("/students/"+promoted+"/notifications");
+      notifRef.once("value").then(function(s){
+        var existing = o2a(s.val());
+        existing.push({classId:cid, className:c.name, date:c.date, seen:false});
+        notifRef.set(a2o(existing));
+      });
+      showToast(cname+" cancelled. "+pname+" promoted!","info");
+    } else {
+      showToast(cname+"'s booking cancelled.","warning");
+    }
   });
 }
 
