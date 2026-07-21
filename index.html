@@ -45,7 +45,7 @@ firebase.initializeApp({
 });
 var db = firebase.database();
 
-var ORDER = ["mon-pilates","thu-boogie","thu-pilates"];
+var ORDER = ["mon-pilates-0830","mon-pilates","thu-boogie","thu-pilates","sat-pilates"];
 var RAMP = [
   {bg:"#EEEDFE",fg:"#3C3489"},{bg:"#E1F5EE",fg:"#085041"},{bg:"#E6F1FB",fg:"#0C447C"},
   {bg:"#FAECE7",fg:"#712B13"},{bg:"#FBEAF0",fg:"#72243E"},{bg:"#FAEEDA",fg:"#633806"}
@@ -106,9 +106,11 @@ function defaultDB(){
   d.password = "yvonne2026";
   d.students = {};
   d.classes = {};
+  d.classes["mon-pilates-0830"] = {name:"Pilates", location:"Gym",capacity:24,date:nextWeekly(1,8,30), cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
   d.classes["mon-pilates"]  = {name:"Pilates",       location:"Burngreen Hall",capacity:24,date:nextWeekly(1,18,0), cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
   d.classes["thu-boogie"]   = {name:"Boogie Fitness", location:"Burngreen Hall",capacity:40,date:nextWeekly(4,18,30),cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
   d.classes["thu-pilates"]  = {name:"Pilates",        location:"Burngreen Hall",capacity:24,date:nextWeekly(4,19,30),cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
+  d.classes["sat-pilates"]  = {name:"Pilates",        location:"Gym",capacity:24,date:nextWeekly(6,8,30),cancelled:false,cancelNote:"",bookings:{},waitlist:{}};
   return d;
 }
 
